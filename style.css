@@ -1,0 +1,26 @@
+/* Met Office external website
+
+Colours:
+- black/dark grey: #202A2C
+- dark grey: #666666
+- grey: #DDDDDD (thin lines)
+- light grey: #EEEEEE (background colour)
+- darkish green: #BCDB0C
+- green: #CCFF33
+- darkish blue: #4BA8BA
+- blue: #00ADD0
+
+*/
+
+/*******************************************************************************
+ * GENERAL
+ ******************************************************************************/
+
+body,h1 {font-family: "Raleway", sans-serif}
+body, html {height: 100%}
+.bgimg {
+  background-image: url('https://www.w3schools.com/w3images/forestbridge.jpg');
+  min-height: 100%;
+  background-position: center;
+  background-size: cover;
+}

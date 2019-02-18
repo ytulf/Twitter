@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o nounset
+today=`date +%Y-%m-%d`
+
+join_by() {
+	local IFS="$1";
+	shift;
+	echo "$*";
+}
+
+help() {
+# Les couleurs
+RED=$(printf '\033[0;31m')
+BLUE=$(printf '\033[0;36m')
+ORANGE=$(printf '\033[0;33m')
+GREEN=$(printf '\033[0;32m')
+NC=$(printf '\033[0m')
+# On affiche l'aide
+cat <<-END
+${RED}Noob - Tu as besoin du help ?
+${GREEN}C'est bien, tu connais le proverbe RTFMN${NC}
+
+Usage:
+$(basename "$0") [${GREEN}help${NC}] [${BLUE}register <user> <pass>${NC}] [${ORANGE}userName <id>${NC}] [${GREEN}lastid${NC}] [${ORANGE}listTweetsForUserId <user>${NC}] [${ORANGE}listUserIdComaSeparated${NC}] [${ORANGE}userIdFromSession <user>${NC}] [${RED}logout <user>${NC}] [${BLUE}recordNewTweet <id> <tweet>${NC}]
+
+———————
+Where:
+${GREEN}help${NC} - montre cet aide
+${BLUE}register${NC} - ajoute un utilisateur avec comme paramètre son nom et son password
+	${ORANGE}userName${NC} - permet de récupérer le nom d'un utilisateur à partir de son ID
+	${GREEN}lastid${NC} - permet de récupérer le nombre de gens dans la base de données
+	${ORANGE}listTweetsForUserId${NC} - permet de lister les tweets pour un utilisateur donné
+	${ORANGE}listUserIdComaSeparated${NC} - permet de lister tout les utilisateurs présent dans la base de données
+	${ORANGE}userIdFromSession${NC} - permet de vérifier qu'un utilisateur possède un token de session
+	${RED}logout${NC} - permet de déconnecter un utilisateur
+	${BLUE}recordNewTweet${NC} - ajoute un tweet avec comme paramètre l'id de l'utilisateur et le contenu du tweet
+END
+}
+# Génération de l'uuid
+uuid=$(uuidgen)
+
+main() {
+	if [ $# -gt 0 ]
+	then
+		case $1 in
+		"register")
+			re="[^a-zA-Z0-9_]"
+			# On test si le login renseigné comporte des caractères non souhaités
+			if [[ $2 =~ $re ]]
+			then
+				# Il comporte des caractères non désirés, on le clean
+				CLEAN=${2//_/}
+				# next, replace spaces with underscores
+				CLEAN=${CLEAN// /_}
+				# now, clean out anything that's not alphanumeric or an underscore
+				CLEAN=${CLEAN//[^a-zA-Z0-9_]/}
+				CLEAN=${CLEAN//_/ }
+				# finally, lowercase with TR
+				CLEAN=`echo -n $CLEAN | tr A-Z a-z`
+				if [[ !$3 ]]
+				then
+					# On hash le password pour éviter qu'il ne soit en clair dans la BDD. Le salt est un uuid généré automatiquement par le pc
+					PasswordHash="$(echo -n "$3" | argon2 $uuid -t 2 -m 16 -p 4 -l 24 -r)"
+					# on test si l'utilisateur n'est pas déjà présent
+					existant_username="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --user_already_exist $CLEAN:$PasswordHash)"
+					if [[ !$existant_username ]]
+					then
+						# on enregistre l'utilisateur avec le password hashé et le uuid (cela nous servira pour le login)
+						/Users/Keijix/Desktop/Twitter/db_wrapper.py --register $CLEAN:$PasswordHash:$uuid
+						# on crée le token de session
+						uuid_file=$(uuidgen)
+						echo $uuid_file ; echo $uuid_file > /tmp/session.$CLEAN.$uuid
+					fi
+				else
+					return "Nom d'utilisateur ou mot de passe non renseigné"
+				fi
+			else
+				if [[ !$3 ]]
+				then
+					# On hash le password pour éviter qu'il ne soit en clair dans la BDD. Le salt est un uuid généré automatiquement par le pc
+					PasswordHash="$(echo -n "$3" | argon2 $uuid -t 2 -m 16 -p 4 -l 24 -r)"
+					# on test si l'utilisateur n'est pas déjà présent
+					existant_username="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --user_already_exist $2:$PasswordHash)"
+					if [[ !$existant_username ]]
+					then
+						# on enregistre l'utilisateur avec le password hashé et le uuid (cela nous servira pour le login)
+						/Users/Keijix/Desktop/Twitter/db_wrapper.py --register $2:$PasswordHash:$uuid
+						# on crée le token de session
+						uuid_file=$(uuidgen)
+						echo $uuid_file ; echo $uuid_file > /tmp/session.$2.$uuid
+					fi
+				else
+					return "Nom d'utilisateur ou mot de passe non renseigné"
+				fi
+			fi
+		;;
+		"userName")
+			# Problème dans le fichier go, des fois username = ID des fois = Name
+			# Obligation de faire un test : si userName est un nombre ou s'il est un nom.
+			re='^[0-9]+$'
+			if ! [[ $2 =~ $re ]]
+			then
+				# $2 est un nom (ex: thomas)
+				/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_id $2
+			else
+				# $2 est un id (ex: 1)
+				/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_name $2
+			fi
+			#-> Problème réglé, dans le fichier go mauvaise déclaration
+		;;
+		"lastid")
+			# On demande au wrapper de nous dire le nombre d'id existant
+			/Users/Keijix/Desktop/Twitter/db_wrapper.py --lastid users
+		;;
+		"login")
+			re="[^a-zA-Z0-9_]"
+			# On test si le login renseigné comporte des caractères non souhaités
+			if [[ $2 =~ $re ]]
+			then
+				# Il comporte des caractères non désirés, on le clean
+				CLEAN=${2//_/}
+				# next, replace spaces with underscores
+				CLEAN=${CLEAN// /_}
+				# now, clean out anything that's not alphanumeric or an underscore
+				CLEAN=${CLEAN//[^a-zA-Z0-9_]/}
+				CLEAN=${CLEAN//_/ }
+				# finally, lowercase with TR
+				CLEAN=`echo -n $CLEAN | tr A-Z a-z`
+				# On check si l'utilisateur existe
+				username_check="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_id $CLEAN)"
+				if [[ !$username_check ]]
+				then
+					# On check si le hash du password donné est le même que celui dans la BDD
+						## Pour cela on récupère l'uuid et on hash de la même façon que lors du register le mot de passe renseigné.
+						## On vérifie si le hash que l'on vient de faire (PasswordToHashFromGO) est égale au hash renseigné (PasswordHashFromBDD)
+					PasswordHashFromBDD="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_password $username_check)"
+					uuidBDD="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_uuid_password $username_check)"
+					PasswordToHashFromGO="$(echo -n "$3" | argon2 $uuidBDD -t 2 -m 16 -p 4 -l 24 -r)"
+					if [[ !$uuidBDD && $PasswordHashFromBDD == $PasswordToHashFromGO ]]
+					then
+						# Si les deux hash sont égaux on créé le token de session
+						uuid_file=$(uuidgen)
+						echo $uuid_file ;	echo $uuid_file > /tmp/session.$CLEAN.$uuidBDD
+					fi
+				fi
+			else
+				# Il ne comporte pas de caractère non désiré, on laisse la fonction standard
+				username_check="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_id $2)"
+				if [[ !$username_check ]]
+				then
+					# On check si le hash du password donné est le même que celui dans la BDD
+						## Pour cela on récupère l'uuid et on hash de la même façon que lors du register le mot de passe renseigné.
+						## On vérifie si le hash que l'on vient de faire (PasswordToHashFromGO) est égale au hash renseigné (PasswordHashFromBDD)
+					PasswordHashFromBDD="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_password $username_check)"
+					uuidBDD="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_uuid_password $username_check)"
+					PasswordToHashFromGO="$(echo -n "$3" | argon2 $uuidBDD -t 2 -m 16 -p 4 -l 24 -r)"
+					if [[ !$uuidBDD && $PasswordHashFromBDD == $PasswordToHashFromGO ]]
+					then
+						# Si les deux hash sont égaux on créé le token de session
+						uuid_file=$(uuidgen)
+						echo $uuid_file ;	echo $uuid_file > /tmp/session.$2.$uuidBDD
+					fi
+				fi
+			fi
+		;;
+		"listTweetsForUserId")
+			if [[ !$2 ]]
+			then
+				# récupère tout les tweet pour l'id renseigné en paramètre
+				list_tweet_id="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --list_tweet_ids $2)"
+				# split la liste reçu et l'envoie dans une boucle pour récupérer leur contenue
+				IFS=',' read -ra NAMES <<< "$list_tweet_id"
+				for i in "${NAMES[@]}"; do
+						/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_tweet_content $i
+				done
+			fi
+		;;
+		"listUserIdComaSeparated")
+			# création d'un tableau
+			UserIdArray=()
+			# récupère le nombre d'ID dans la bdd
+			cnt="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --lastid users)"
+			# pour chaque ID on récupère le nom et on l'assemble pour le renvoyer au .go qui va le split
+			for (( i = 1; i <= cnt; i++ )); do
+				UserIdArray[i]="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_name $i)"
+				#echo ${UserIdArray[i]}
+				tojoin[i]="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_id ${UserIdArray[i]})"
+			done
+			join_by , "${tojoin[@]}"
+			#join_by , "${UserIdArray[@]}"
+		;;
+		"userIdFromSession")
+			session_token="$(grep -H $2 /tmp/session.*)"
+			string=$(echo $session_token | tr "." "\n")
+			arrSessionToken=(${session_token//./ })
+			userid="$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_id ${arrSessionToken[1]})"
+			echo ${arrSessionToken[1]}
+			#lui renvoyer l'id de l'utilisateur
+			# MEttre dans le fichier que l'uuid
+		;;
+		"logout")
+			session_token=0
+			echo $session_token
+		;;
+		"recordNewTweet")
+			if [[ !$2 && !$3 ]]
+			then
+				# On récupère l'id de l'utilisateur pour pouvoir lui assigner le tweet
+				IDUser=$(/Users/Keijix/Desktop/Twitter/db_wrapper.py --get_user_id $2)
+				echo $IDUser
+				# on enregistre le tweet pour l'utilisateur
+				content=${@:3:140}
+				# Function de filtrage
+				CLEAN=${content//_/}
+				# next, replace spaces with underscores
+				CLEAN=${CLEAN// /_}
+				# now, clean out anything that's not alphanumeric or an underscore
+				CLEAN=${CLEAN//[^a-zA-Z0-9_]/}
+				CLEAN=${CLEAN//_/ }
+				# finally, lowercase with TR
+				CLEAN=`echo -n $CLEAN | tr A-Z a-z`
+				/Users/Keijix/Desktop/Twitter/db_wrapper.py --register_tweet $IDUser:"$CLEAN"
+			fi
+		;;
+		"help")
+		 	help
+		 ;;
+		*)
+			help
+		;;
+		esac
+	else
+		help
+	fi
+}
+main $@
